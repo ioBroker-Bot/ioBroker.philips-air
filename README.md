@@ -93,9 +93,10 @@ More details are documented in [docs/CX7550.md](docs/CX7550.md).
 -->
 ### **WORK IN PROGRESS**
 
-- (tt-tom17) Added the combined allergen/sleep preset ("Allergie-/Ruhemodus", raw mode AS with fan speed as) reported by the AC4236/14 - it was left as a raw code before (VMI1)
-- (tt-tom17) The total filter life hours (flttotal0/1/2) are now shown next to the remaining hours on classic devices, and the device language and version are listed as device info instead of unknown attributes (VMI1)
-- (tt-tom17) The "wrong device model" warning now compares how many controls each model would explain, so it is no longer silenced by a single overlapping register - a device answering eight controls of another model is reported again (VMI1)
+- (tt-tom17) Added the combined allergen/sleep preset ("Allergie-/Ruhemodus") reported by the AC4236/14 (VMI1)
+- (tt-tom17) Classic devices now show the total filter life next to the remaining hours, plus the device language and version (VMI1)
+- (tt-tom17) The "wrong device model" warning is no longer silenced by a single register that both models use (VMI1)
+- (tt-tom17) Fixed a device attribute spelled like one of the adapter's own state names being treated as a mapped value (VMI1)
 
 ### 2.1.0 (2026-08-29)
 

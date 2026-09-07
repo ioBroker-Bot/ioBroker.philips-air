@@ -599,3 +599,41 @@ describe('mapping - AC4236/14 classic attributes (GitHub #150)', () => {
         });
     });
 });
+
+describe('mapping - renameReported reports what it actually renamed', () => {
+    it('returns the assigned friendly names, not merely the keys present afterwards', () => {
+        const { renameReported } = createMapping('AC2889');
+        const reported = { pwr: '1', pm25: 7, D09999: 1 };
+        const renamed = renameReported(reported);
+        expect(renamed).to.be.instanceOf(Set);
+        expect([...renamed].sort()).to.deep.equal(['pm25', 'power']);
+        // The unmapped D-code survives untouched and is NOT reported as renamed.
+        expect(reported.D09999).to.equal(1);
+    });
+
+    it('does not claim a raw key that only collides with a friendly name (GitHub #150)', () => {
+        // With AC3221 selected, `mode` is the friendly name of the D0310C control - but the raw key
+        // `mode` sent by a classic device is not mapped at all. Reporting it as renamed made the
+        // adapter write the raw code "AG" into control.mode and hid it from unknownStates.
+        const { renameReported } = createMapping('AC3221');
+        const reported = { mode: 'AG', D03102: 1 };
+        const renamed = renameReported(reported);
+        expect(renamed.has('power')).to.be.true;
+        expect(renamed.has('mode')).to.be.false;
+        expect(reported.mode).to.equal('AG');
+    });
+
+    it('claims a key whose raw spelling equals its own friendly name', () => {
+        // `pm25` and `name` are mapped to themselves - those must count as renamed, or a correctly
+        // mapped sensor would end up in unknownStates.
+        const { renameReported } = createMapping('AC2889');
+        const renamed = renameReported({ pm25: 7, name: 'Galerie' });
+        expect(renamed.has('pm25')).to.be.true;
+        expect(renamed.has('name')).to.be.true;
+    });
+
+    it('returns an empty set for a missing status', () => {
+        const { renameReported } = createMapping('AC2889');
+        expect([...renameReported(undefined)]).to.deep.equal([]);
+    });
+});

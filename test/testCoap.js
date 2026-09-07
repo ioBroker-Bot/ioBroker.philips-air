@@ -410,3 +410,22 @@ describe('coap - renameAttributes', () => {
         expect(rename({ err: 12345 }).error).to.equal(12345);
     });
 });
+
+describe('coap - renameAttributes reports the assigned names (GitHub #150)', () => {
+    it('returns the friendly names so the adapter can spot colliding raw keys', () => {
+        const inst = makeInstance();
+        const status = { state: { reported: { pwr: '1', mode: 'AG', D0311F: 1 } } };
+        const renamed = inst.renameAttributes(status);
+        expect(renamed).to.be.instanceOf(Set);
+        expect(renamed.has('power')).to.be.true;
+        expect(renamed.has('mode')).to.be.true;
+        // Unmapped D-code: neither renamed nor removed from the frame.
+        expect(renamed.has('D0311F')).to.be.false;
+        expect(status.state.reported.D0311F).to.equal(1);
+    });
+
+    it('returns an empty set for a frame without a state block', () => {
+        const inst = makeInstance();
+        expect([...inst.renameAttributes({})]).to.deep.equal([]);
+    });
+});

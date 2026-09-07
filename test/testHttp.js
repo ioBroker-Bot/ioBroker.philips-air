@@ -155,3 +155,25 @@ describe('http - protocol hint', () => {
         expect(hints(emitted)).to.have.lengthOf(1);
     });
 });
+
+describe('http - status event carries the assigned names (GitHub #150)', () => {
+    it('emits the renamed friendly names alongside the status', async () => {
+        const { createMapping } = require('../lib/mapping');
+        const inst = Object.create(AirPurifier.prototype);
+        inst.renameReported = createMapping('AC2889').renameReported;
+        // No key negotiated and already connected: processResponse() then only renames and emits.
+        inst.client = { key: null };
+        inst.connected = true;
+        const emitted = [];
+        inst.emit = (event, ...args) => emitted.push([event, ...args]);
+
+        await inst.processResponse(JSON.stringify({ pwr: '1', D0311F: 1 }));
+
+        const status = emitted.find(e => e[0] === 'status');
+        expect(status, 'a status event was emitted').to.not.be.undefined;
+        expect(status[1].power).to.equal(true);
+        expect(status[2]).to.be.instanceOf(Set);
+        expect(status[2].has('power')).to.be.true;
+        expect(status[2].has('D0311F')).to.be.false;
+    });
+});

@@ -150,7 +150,14 @@ function coerceToType(value, type) {
     return value;
 }
 
-async function updateStatus(status) {
+async function updateStatus(status, renamedNames) {
+    // Which keys of `status` are genuinely mapped attributes. Presence under a friendly name is not
+    // enough: a raw key can be spelled exactly like some model's friendly name (the classic `mode`
+    // key vs. the AC3221 control D0310C -> `mode`), and treating such a collision as mapped wrote the
+    // raw device code into control.mode and hid it from unknownStates (GitHub #150). The protocol
+    // layer reports what it actually renamed; the knownNames fallback only guards a caller that does
+    // not (no such caller ships with the adapter).
+    const mapped = renamedNames instanceof Set ? renamedNames : knownNames;
     // Several raw keys legitimately share one friendly name (e.g. the classic `Runtime` and the
     // new-gen lowercase `uptime` alias both map to `uptime`, `dtrs`/`D03211` both to `timerMinutes`).
     // A device only ever sends one of each pair, but both entries match `status[item.name]`, so guard
@@ -158,7 +165,11 @@ async function updateStatus(status) {
     const writtenNames = new Set();
     for (const attr of Object.keys(activeMapping)) {
         const item = activeMapping[attr];
-        if (!Object.prototype.hasOwnProperty.call(status, item.name) || writtenNames.has(item.name)) {
+        if (
+            !mapped.has(item.name) ||
+            !Object.prototype.hasOwnProperty.call(status, item.name) ||
+            writtenNames.has(item.name)
+        ) {
             continue;
         }
         writtenNames.add(item.name);
@@ -216,7 +227,7 @@ async function updateStatus(status) {
         await setDeviceState(`${channel}.${item.name}`, common, coerceToType(status[item.name], common.type));
     }
 
-    await updateUnknownStates(status);
+    await updateUnknownStates(status, mapped);
 }
 
 /**
@@ -246,15 +257,16 @@ function inferUnknownType(value) {
  * `unknownStates.<rawKey>` and log each new raw key once so a user can report it for onboarding.
  *
  * @param status the (partially renamed) status object as received by updateStatus
+ * @param mapped the friendly names renameReported() actually assigned for this frame
  */
-async function updateUnknownStates(status) {
+async function updateUnknownStates(status, mapped) {
     // How many controls each OTHER model would claim from this very status frame. Counted over the
     // whole frame (not per key) because only the comparison against the selected model's own
     // resolved controls carries information - see maybeWarnWrongModel() below.
     const foreignControlCount = new Map();
     for (const rawKey of Object.keys(status)) {
         // 'key' is a potential HTTP client secret, never renamed on purpose - never surface it either.
-        if (rawKey === 'key' || knownNames.has(rawKey)) {
+        if (rawKey === 'key' || mapped.has(rawKey)) {
             continue;
         }
         const owners = modelsOwningRawKey(rawKey);
@@ -369,12 +381,12 @@ async function main() {
         adapter.setState('info.connection', connected, true);
     });
 
-    airPurifier.on('status', async status => {
+    airPurifier.on('status', async (status, renamedNames) => {
         if (!airPurifier) {
             return;
         }
         adapter.log.debug(`STATUS: ${JSON.stringify(status)}`);
-        await updateStatus(status);
+        await updateStatus(status, renamedNames);
     });
 
     airPurifier.on('info', async status => {
