@@ -552,3 +552,50 @@ describe('mapping - modelsOwningRawKey (wrong-model hint)', () => {
         expect(modelsOwningRawKey('D03105')).to.have.members(['CX7550', 'AC3221']);
     });
 });
+
+describe('mapping - AC4236/14 classic attributes (GitHub #150)', () => {
+    const { renameReported } = createMapping('AC2889');
+
+    it('resolves the combined allergen+sleep preset in both mode and fan speed', () => {
+        // The device reports the pair mode 'AS' / om 'as' for what the German UI calls
+        // "Allergie-/Ruhemodus". Before this both fell through and left the raw codes in the state.
+        const reported = { mode: 'AS', om: 'as' };
+        renameReported(reported);
+        expect(reported).to.deep.equal({ mode: 'allergenSleep', fanSpeed: 'allergenSleep' });
+    });
+
+    it('maps the total filter hours next to the remaining ones', () => {
+        const reported = { fltsts0: 403, flttotal0: 720, fltsts1: 1248, flttotal1: 4800, flttotal2: 65535 };
+        renameReported(reported);
+        expect(reported).to.deep.equal({
+            preFilterCleanInHours: 403,
+            preFilterTotalHours: 720,
+            hepaFilterReplaceInHours: 1248,
+            hepaFilterTotalHours: 4800,
+            activeCarbonFilterTotalHours: 65535,
+        });
+    });
+
+    it('files the classic device-info strings under device.* instead of unknownStates', () => {
+        const reported = { language: 'EN', DeviceVersion: '4.1.8' };
+        renameReported(reported);
+        expect(reported).to.deep.equal({ language: 'EN', deviceVersion: '4.1.8' });
+        expect(channelOf(STANDARD_MAPPING.language)).to.equal('device');
+        expect(channelOf(STANDARD_MAPPING.DeviceVersion)).to.equal('device');
+    });
+
+    it('shares the total-filter names with the AC3221 D-code spellings', () => {
+        // Same friendly names on both generations: a device only ever sends one of the two
+        // spellings, and updateStatus() guards against writing a name twice per frame.
+        expect(STANDARD_MAPPING.flttotal0.name).to.equal(MODEL_MAPPING.AC3221.D05207.name);
+        expect(STANDARD_MAPPING.flttotal1.name).to.equal(MODEL_MAPPING.AC3221.D05408.name);
+    });
+
+    it('still exposes the eight classic controls that a wrong model selection hides', () => {
+        // The AC4236/14 log from #150: with AC3221 selected these all fell through to
+        // unknownStates.*, which is what "operation mode is missing" was about.
+        ['om', 'pwr', 'cl', 'aqil', 'uil', 'aqit', 'ddp', 'mode'].forEach(rawKey => {
+            expect(modelsOwningRawKey(rawKey)).to.deep.equal(['AC2889']);
+        });
+    });
+});
