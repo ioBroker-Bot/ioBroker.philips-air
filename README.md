@@ -93,7 +93,7 @@ More details are documented in [docs/CX7550.md](docs/CX7550.md).
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 2.2.0 (2026-09-08)
 
 - (tt-tom17) Added the combined allergen/sleep preset ("Allergie-/Ruhemodus") reported by the AC4236/14 (VMI1)
 - (tt-tom17) Classic devices now show the total filter life next to the remaining hours, plus the device language and version (VMI1)
@@ -143,6 +143,7 @@ More details are documented in [docs/CX7550.md](docs/CX7550.md).
 - (mcm1957) Dependencies have been updated
 
   
+
 [Older changelogs can be found there](CHANGELOG_OLD.md)
 
 ## License
