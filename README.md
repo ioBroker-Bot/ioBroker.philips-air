@@ -91,6 +91,13 @@ More details are documented in [docs/CX7550.md](docs/CX7550.md).
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+
+- (tt-tom17) Added the combined allergen/sleep preset ("Allergie-/Ruhemodus") reported by the AC4236/14 (VMI1)
+- (tt-tom17) Classic devices now show the total filter life next to the remaining hours, plus the device language and version (VMI1)
+- (tt-tom17) The "wrong device model" warning is no longer silenced by a single register that both models use (VMI1)
+- (tt-tom17) Fixed a device attribute spelled like one of the adapter's own state names being treated as a mapped value (VMI1)
+
 ### 2.1.0 (2026-08-29)
 
 - (tt-tom17) Fixed error messages ("DB closed", "setTimeout called, but adapter is shutting down") that appeared in the log every time the adapter was stopped or restarted (MatthiasBosch)

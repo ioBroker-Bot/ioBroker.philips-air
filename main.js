@@ -22,10 +22,13 @@ let activeMapping;
 // updateStatus() to tell genuinely unknown raw device attributes (-> unknownStates.*) apart from
 // attributes renameReported() already renamed to a friendly name (-> known, handled above).
 let knownNames;
-// Set once the device reports any of the selected model's own controls: proof that the configured
-// model matches the device dialect. Used to suppress a false "wrong model?" hint when a single
-// shared/overlapping raw register (e.g. AC3221's D03105 seen on a CX3550) is left unmapped.
-let activeModelControlSeen = false;
+// The selected model's own controls the device has actually reported so far. Its SIZE is what the
+// "wrong model?" hint weighs against the number of controls a foreign model would claim: a single
+// shared/overlapping raw register (e.g. AC3221's D03105 seen on a CX3550) must not raise the hint,
+// but a device that answers eight controls of another model and only one of the selected one must.
+const activeModelControlsSeen = new Set();
+// Raised once the "wrong model?" hint has been logged, so it stays a one-off per adapter run.
+let wrongModelWarned = false;
 // Raw attribute keys we already logged once as "unknown" this adapter run, so a device that keeps
 // reporting the same unmapped D-code does not spam the log on every status frame.
 const loggedUnknownKeys = new Set();
@@ -147,7 +150,14 @@ function coerceToType(value, type) {
     return value;
 }
 
-async function updateStatus(status) {
+async function updateStatus(status, renamedNames) {
+    // Which keys of `status` are genuinely mapped attributes. Presence under a friendly name is not
+    // enough: a raw key can be spelled exactly like some model's friendly name (the classic `mode`
+    // key vs. the AC3221 control D0310C -> `mode`), and treating such a collision as mapped wrote the
+    // raw device code into control.mode and hid it from unknownStates (GitHub #150). The protocol
+    // layer reports what it actually renamed; the knownNames fallback only guards a caller that does
+    // not (no such caller ships with the adapter).
+    const mapped = renamedNames instanceof Set ? renamedNames : knownNames;
     // Several raw keys legitimately share one friendly name (e.g. the classic `Runtime` and the
     // new-gen lowercase `uptime` alias both map to `uptime`, `dtrs`/`D03211` both to `timerMinutes`).
     // A device only ever sends one of each pair, but both entries match `status[item.name]`, so guard
@@ -155,14 +165,19 @@ async function updateStatus(status) {
     const writtenNames = new Set();
     for (const attr of Object.keys(activeMapping)) {
         const item = activeMapping[attr];
-        if (!Object.prototype.hasOwnProperty.call(status, item.name) || writtenNames.has(item.name)) {
+        if (
+            !mapped.has(item.name) ||
+            !Object.prototype.hasOwnProperty.call(status, item.name) ||
+            writtenNames.has(item.name)
+        ) {
             continue;
         }
         writtenNames.add(item.name);
         if (item.control) {
-            // A resolved per-model control proves the selected model matches the device: see
-            // activeModelControlSeen (gates the "wrong model?" hint in updateUnknownStates below).
-            activeModelControlSeen = true;
+            // Resolved per-model controls are the evidence that the selected model matches the
+            // device: see activeModelControlsSeen (weighs the "wrong model?" hint in
+            // updateUnknownStates below).
+            activeModelControlsSeen.add(item.name);
         }
         const channel = channelOf(item);
 
@@ -212,7 +227,7 @@ async function updateStatus(status) {
         await setDeviceState(`${channel}.${item.name}`, common, coerceToType(status[item.name], common.type));
     }
 
-    await updateUnknownStates(status);
+    await updateUnknownStates(status, mapped);
 }
 
 /**
@@ -242,29 +257,25 @@ function inferUnknownType(value) {
  * `unknownStates.<rawKey>` and log each new raw key once so a user can report it for onboarding.
  *
  * @param status the (partially renamed) status object as received by updateStatus
+ * @param mapped the friendly names renameReported() actually assigned for this frame
  */
-async function updateUnknownStates(status) {
+async function updateUnknownStates(status, mapped) {
+    // How many controls each OTHER model would claim from this very status frame. Counted over the
+    // whole frame (not per key) because only the comparison against the selected model's own
+    // resolved controls carries information - see maybeWarnWrongModel() below.
+    const foreignControlCount = new Map();
     for (const rawKey of Object.keys(status)) {
         // 'key' is a potential HTTP client secret, never renamed on purpose - never surface it either.
-        if (rawKey === 'key' || knownNames.has(rawKey)) {
+        if (rawKey === 'key' || mapped.has(rawKey)) {
             continue;
+        }
+        const owners = modelsOwningRawKey(rawKey);
+        for (const owner of owners) {
+            foreignControlCount.set(owner, (foreignControlCount.get(owner) || 0) + 1);
         }
         if (!loggedUnknownKeys.has(rawKey)) {
             loggedUnknownKeys.add(rawKey);
-            // If the unmapped attribute is a known control of a DIFFERENT model, the user may have
-            // selected the wrong device model - but only warn when NONE of the selected model's own
-            // controls have resolved yet. New-gen models share the D-code namespace (e.g. AC3221 and
-            // CX3550 both use D031xx), so a lone overlapping register on an otherwise-working model is
-            // just an attribute this model does not map - not a wrong-model signal - and must not
-            // nag a correctly-configured user.
-            const owners = modelsOwningRawKey(rawKey);
-            if (owners.length && !activeModelControlSeen) {
-                adapter.log.warn(
-                    `Device attribute "${rawKey}" is a control of model ${owners.join('/')}, but the ` +
-                        `selected model is "${adapter.config.model || 'AC2889'}". If controls are missing, ` +
-                        `select the correct device model in the adapter settings.`,
-                );
-            } else if (owners.length) {
+            if (owners.length) {
                 adapter.log.debug(
                     `Raw attribute "${rawKey}" (a control of ${owners.join('/')}) is not mapped for the ` +
                         `selected model "${adapter.config.model || 'AC2889'}"; exposed read-only as ` +
@@ -292,6 +303,43 @@ async function updateUnknownStates(status) {
             value,
         );
     }
+    maybeWarnWrongModel(foreignControlCount);
+}
+
+/**
+ * Warn once when the status frame looks like it belongs to a different model than the configured
+ * one. The signal is a COMPARISON, not a single hit: new-gen models share the D-code namespace, so
+ * one overlapping register on an otherwise-working model is just an attribute this model does not
+ * map. Only a foreign model that would claim strictly more controls than the selected model has
+ * actually resolved is worth telling the user about - that is the AC4236/14 case from GitHub #150,
+ * where eight classic AC2889 controls fell through while the single register D03180 (an AC3221
+ * control) was enough to make the previous "any control seen" check stay silent.
+ *
+ * @param foreignControlCount controls each other model would claim from the current status frame
+ */
+function maybeWarnWrongModel(foreignControlCount) {
+    if (wrongModelWarned) {
+        return;
+    }
+    const selectedModel = adapter.config.model || 'AC2889';
+    // 'Generic' has no controls at all - it is the deliberate read-only choice, so every device
+    // would trip the comparison. Someone who picked it does not need to be told about controls.
+    if (selectedModel === 'Generic') {
+        return;
+    }
+    const [bestModel, bestCount] = [...foreignControlCount.entries()]
+        .filter(([model]) => model !== selectedModel)
+        .sort((a, b) => b[1] - a[1])[0] || [null, 0];
+    if (!bestModel || bestCount <= activeModelControlsSeen.size) {
+        return;
+    }
+    wrongModelWarned = true;
+    adapter.log.warn(
+        `This device reports ${bestCount} control attribute(s) of model ${bestModel}, but only ` +
+            `${activeModelControlsSeen.size} of the selected model "${selectedModel}". The controls are ` +
+            `exposed read-only under unknownStates.* instead of control.*. If controls are missing, ` +
+            `select model "${bestModel}" in the adapter settings.`,
+    );
 }
 
 async function main() {
@@ -333,12 +381,12 @@ async function main() {
         adapter.setState('info.connection', connected, true);
     });
 
-    airPurifier.on('status', async status => {
+    airPurifier.on('status', async (status, renamedNames) => {
         if (!airPurifier) {
             return;
         }
         adapter.log.debug(`STATUS: ${JSON.stringify(status)}`);
-        await updateStatus(status);
+        await updateStatus(status, renamedNames);
     });
 
     airPurifier.on('info', async status => {
